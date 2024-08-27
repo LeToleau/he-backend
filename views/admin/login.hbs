@@ -1,0 +1,11 @@
+<div class="login-page">
+    <form class="login-page__form" action="/admin/login" method="post">
+        <input class="login-page__input" type="text" placeholder="Usuario" name="user">
+        <input class="login-page__input" type="password"  placeholder="Password" name="password">
+        <button class="login-page__submit" type="submit">Ingresar</button>
+        {{#if error}}
+            <p>Usuario inexistente</p>
+        {{/if}}
+    </form>
+
+</div>
