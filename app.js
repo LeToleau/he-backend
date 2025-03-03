@@ -1,5 +1,7 @@
 var createError = require('http-errors');
 var express = require('express');
+const http = require("http");
+const { initializeSocket } = require("./socketService");
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
@@ -14,23 +16,25 @@ var session = require('express-session');
 
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
-// var loginRouter = require('./routes/admin/login');
+var loginRouter = require('./routes/admin/login');
 var logoutRouter = require('./routes/admin/logout');
 var apiRouter = require('./routes/api');
 var publicLoginRouter = require('./routes/publicLogin');
-// var exportPRouter = require('./routes/exportP');
-// var exportWRouter = require('./routes/exportW');
 
 var app = express();
+const server = http.createServer(app);
+initializeSocket(server);
 
 // Configura CORS para permitir el origen específico
 const corsOptions = {
   origin: 'http://localhost:5173', // Origen que quieres permitir
-  optionsSuccessStatus: 200
+  credentials: true,
 };
 
+// Configura CORS globalmente para todas las rutas
 app.use(cors(corsOptions));
 
+//app.use(cors(corsOptions));
 // Ruta al favicon
 const faviconPath = path.join(__dirname, '/public/favicon.ico');
 // Usar el middleware serve-favicon
@@ -80,8 +84,8 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // app.use('/admin/login', loginRouter);
-app.use('/api', cors(), apiRouter);
-app.use('/login', publicLoginRouter);
+app.use('/api', apiRouter);
+app.use('/admin/login', loginRouter);
 
 secured = async (req, res, next) => {
   var isLogged = req.session.isLogged;
@@ -96,10 +100,8 @@ secured = async (req, res, next) => {
   }
 }
 
-app.use('/', secured, indexRouter);
+app.use('/', indexRouter);
 app.use('/users', secured, usersRouter);
-// app.use('/exportP', secured, exportPRouter);
-// app.use('/exportW', secured, exportWRouter);
 app.use('/admin/logout', secured, logoutRouter);
 
 // catch 404 and forward to error handler
@@ -112,7 +114,7 @@ app.use(function(err, req, res, next) {
   // set locals, only providing error in development
   res.locals.message = err.message;
   res.locals.error = req.app.get('env') === 'development' ? err : {};
-
+  
   // render the error page
   res.status(err.status || 500);
   res.render('error');
@@ -124,4 +126,9 @@ app.listen(3000, () => {
 });
 */
 
+server.listen(3001, () => {
+  console.log("Servidor corriendo en http://localhost:3001");
+});
+
+module.exports = { app };
 module.exports = app;

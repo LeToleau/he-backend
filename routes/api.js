@@ -1,28 +1,20 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const pool = require('../models/dbConnection');
+const pool = require("../models/dbConnection");
 // const nodemailer = require('nodemailer');
-const { JSDOM } = require('jsdom');
-const createDOMPurify = require('dompurify');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-
-/*
-const prizeFrequency = {
-    prize1: 0,
-    prize2: 2,
-    prize3: 10
-};
-
-const date = '2024-07-01';
-
-let endContest = false;
-var availablePrizes = [];
-let isInitializing = false;
-*/
+const { JSDOM } = require("jsdom");
+const createDOMPurify = require("dompurify");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const matchPost = require("../models/createMatchModel");
+const authMiddleware = require("../middlewares/auth");
+const { notifyInvitationUpdate } = require("../socketService");
+const cloudinary = require('../cloudinaryConfig');
+const multer = require("multer");
+const upload = multer({ dest: "uploads/" });
 
 // Crear instancia de DOMPurify
-const window = (new JSDOM('')).window;
+const window = new JSDOM("").window;
 const DOMPurify = createDOMPurify(window);
 
 /*
@@ -43,155 +35,6 @@ const getWeekOfYear = () => {
     const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
     const pastDaysOfYear = (today - firstDayOfYear) / 86400000;
     return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay()) / 7);
-};
-
-const getPrizes = async () => {
-    try {
-        let currentDate = new Date().toISOString().split('T')[0];
-        const rows = await pool.query('SELECT prize FROM lb_contest_available_prizes ORDER BY id ASC', [currentDate]);
-        const prizesFromDB = [];
-        if (rows.length > 0) {
-            rows.forEach(row => {
-                prizesFromDB.push(row.prize);
-            });
-            return prizesFromDB;
-        } else {
-            return [];
-        }
-    } catch (error) {
-        console.error(error, error.message)
-    }
-}
-
-const saveInitializationDate = async () => {
-    const currentDay = new Date().toISOString().split('T')[0];
-
-    try {
-        // Inserta la fecha de inicialización
-        await pool.query('INSERT INTO lb_contest_date (date) VALUES (?)', [currentDay]);
-    } catch (error) {
-        console.error('Error saving initialization date:', error);
-    }
-};
-
-const initializeAvailablePrizes = async () => {
-    if (isInitializing) return;
-    isInitializing = true;
-    const currentDay = new Date().toISOString().split('T')[0];
-
-    try {
-        let initDate = false;
-
-        const [rows] = await pool.query('SELECT date FROM lb_contest_date WHERE date = ?', [currentDay]);
-        const initializationRows = rows !== undefined ? [rows.date] : [];
-        console.log(initializationRows[0])
-
-        if (initializationRows.length > 0) {
-            initDate = initializationRows[0];
-        } else {
-            initDate = true;
-        }  
-
-        let currentDate = new Date();
-        let maxDate = new Date('2024-07-01');
-
-        // Verifica si la semana actual ya ha sido inicializada
-        if (initDate === currentDay) {
-            console.log(`Day ${currentDay} already initialized.`);
-
-            isInitializing = false;
-            return;
-        } else if (currentDate >= maxDate) {
-            // Verifica si han pasado más de MAX_DAYS dias desde la primera inicialización
-            console.log(`Contest has finished`);
-            endContest = true;
-            isInitializing = false;
-            return;
-
-        } else {
-            console.log('Populating prizes list')
-            const prizeCount = { prize1: 0, prize2: 0, prize3: 0 };
-            const remainingPrizes = await getPrizes();
-            availablePrizes = [];
-
-            if (remainingPrizes.length > 0) {
-                remainingPrizes.forEach(remPrize => {
-                    if (remPrize !== 'no prize') {
-                        availablePrizes.push(remPrize);
-                    }
-                })
-            }
-            
-            for (let prize in prizeFrequency) {
-                const remaining = Math.max(0, prizeFrequency[prize]);
-                for (let i = 0; i < remaining; i++) {
-                    availablePrizes.push(prize);
-                }
-            }
-        
-            const remainingSlots = Math.max(0, 38 - Object.values(prizeCount).reduce((acc, cur) => acc + cur, 0));
-            for (let i = 0; i < remainingSlots; i++) {
-                availablePrizes.push('no prize');
-            }
-        
-            shuffleArray(availablePrizes);
-            await saveInitializationDate();
-            await saveAvailablePrizesToDB();
-
-            isInitializing = false;
-        }
-    } catch (error) {
-        isInitializing = false;
-        console.log(error, error.message);
-    }
-};
-
-const saveAvailablePrizesToDB = async () => {
-    const currentWeek = getWeekOfYear();
-    const currentDay = new Date().toISOString().split('T')[0];
-    
-    try {
-        const [rows] = await pool.query('SELECT date FROM lb_contest_date WHERE date = ?', [currentDay]);
-        const initializationRows = rows ? JSON.parse(JSON.stringify(rows)) : [];
-        const initDateRegister = initializationRows.date ? initializationRows.date.split('T')[0] : false;
-        if (initDateRegister) {
-            await pool.query('DELETE FROM lb_contest_available_prizes WHERE date != ?', [currentDay]);
-        }
-
-        for (let prize of availablePrizes) {
-            await pool.query('INSERT INTO lb_contest_available_prizes (prize, week, date) VALUES (?, ?, ?)', [prize, currentWeek, currentDay]);
-        }
-    } catch (error) {
-        console.log(error, error.message);
-    }
-    
-};
-
-const getRandomPrize = async () => {
-        await initializeAvailablePrizes();
-        try {
-            const prizesFromDb = await getPrizes();
-            if (prizesFromDb.length > 0 && !endContest) {
-                console.log('Getting prize..')
-                const prize = prizesFromDb.shift();
-                await pool.query('DELETE FROM lb_contest_available_prizes WHERE id = (SELECT id FROM (SELECT id FROM lb_contest_available_prizes WHERE prize = ? ORDER BY id ASC LIMIT 1) AS subquery)', [prize]);
-                return prize;
-            } else {
-                console.log('No prizes..')
-                return 'no prize';
-            }
-        
-        } catch (error) {
-            console.log('Error getting prizes..', error);
-            return 'no prize';
-        }
-};
-
-const shuffleArray = (array) => {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
 };
 
 const sendPrizeEmail = async (email, prize, code, image) => {
@@ -260,97 +103,549 @@ const sendPrizeEmail = async (email, prize, code, image) => {
 
 */
 
-router.post('/participants', async (req, res) => {
-    try {
-        const name = DOMPurify.sanitize(req.body.username);
+router.post("/participants", async (req, res) => {
+  try {
+    const name = DOMPurify.sanitize(req.body.username);
 
-        const rawPassword = DOMPurify.sanitize(req.body.password);
-        const hashedPassword = await bcrypt.hash(rawPassword, 10);
+    const rawPassword = DOMPurify.sanitize(req.body.password);
+    const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
-        const mail = DOMPurify.sanitize(req.body.mail);
-        const city = DOMPurify.sanitize(req.body.city);
-        const position = DOMPurify.sanitize(req.body.position);
-        const prefFoot = DOMPurify.sanitize(req.body.prefFoot);
+    const mail = DOMPurify.sanitize(req.body.mail);
+    const city = DOMPurify.sanitize(req.body.city);
+    const position = DOMPurify.sanitize(req.body.position);
+    const prefFoot = DOMPurify.sanitize(req.body.prefFoot);
 
-        // const uniqueId = DOMPurify.sanitize(req.body.uniqueId);
-        // const wonGame = req.body.wonGame;
-        
-        
-        // const queryCheck = 'SELECT COUNT(*) as count FROM lb_contest_participants WHERE tax_code = ?';
+    // const wonGame = req.body.wonGame;
 
-        // const [checkResult] = await pool.query(queryCheck, [taxCode]);
-        // const isRegistered = checkResult.count > 0;
-        const query = `
+    // const queryCheck = 'SELECT COUNT(*) as count FROM lb_contest_participants WHERE tax_code = ?';
+
+    // const [checkResult] = await pool.query(queryCheck, [taxCode]);
+    // const isRegistered = checkResult.count > 0;
+    const query = `
         INSERT INTO he_public_users (username, password, email, city, position, preferredFoot)
         VALUES (?, ?, ?, ?, ?, ?)
         `;
-        const result = await pool.query(query, [name, hashedPassword, mail, city, position, prefFoot]);
-        console.log('Participant registered - Name: ' + name + ', Mail: ' + mail + ', Position: ' + position + ', Preferred Foot: ' + prefFoot);
-        res.status(201).json({ success: 'success' });
-        
-        // let consoleMsg = '';
+    const queryProfile = `
+      INSERT INTO he_public_profiles (user_id, profile_picture)
+      VALUES (?, ?);
+    `;
+    const result = await pool.query(query, [
+      name,
+      hashedPassword,
+      mail,
+      city,
+      position,
+      prefFoot,
+    ]);
 
-        /*
-        if (!isRegistered) {
-            //const prize = wonGame ? await getRandomPrize() : 'no prize';
-            const participantId = result.insertId;
+    const userId = result.insertId;
+    await pool.query(queryProfile, [userId, "profile-picture.svg"]);
 
-            if (prize !== 'no prize') {
-                await pool.query(
-                    'INSERT INTO lb_contest_winners (participant_id, name, lastname, phone, email, tax_code, city, postal_code, province, address, communications, prize, unique_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-                    [participantId, name, lastname, phone, mail, taxCode, city, postCode, province, address, communications, prize, uniqueId]
-                );
-                let message;
-                let imgUrl;
+    const accessToken = jwt.sign(
+      { id: userId, email: mail }, // Payload del token
+      process.env.JWT_ACCESS_SECRET, // Clave secreta
+      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN } // Expiración
+    );
 
-                switch (prize) {
-                    case 'prize1':
-                        message = 'UN <strong>soggiorno di 1 notte per due persone con percorso benessere in una struttura a scelta tra QC Terme Garda, QC Terme Roma, QC Terme Monte Bianco, QC Terme Bagni Vecchi e Bagni Nuovi, entrambi a Bormio.</strong>';
-                        imgUrl = 'acque-termali';
-                        break;
-                    case 'prize2':
-                        message = 'UNA <strong>Eau De Toilette Aqve Romane</strong>';
-                        imgUrl = 'eau-de-toilete';
-                        break;
-                    case 'prize3':
-                        message = 'UN <strong>Shower Gel travel size Aqve Romane</strong>';
-                        imgUrl = 'shower-gel';
-                        break
-                }
+    const refreshToken = jwt.sign(
+      { id: userId, email: mail },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN }
+    );
 
-                await sendPrizeEmail(mail, message, uniqueId, imgUrl);
-            }
+    // Configurar las cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true, // No accesible desde JavaScript
+      //secure: process.env.NODE_ENV === 'production', // Solo en HTTPS en producción
+      sameSite: "Lax", // Evitar envío en cross-origin requests
+      maxAge: 120000, // Expira en 10 seg (en ms)
+    });
 
-            consoleMsg = 'Participant Registered Successfully';
-            res.status(201).json({ message: consoleMsg, registered: isRegistered, prize: prize });
-        } else {
-            consoleMsg = 'Participant Already Registered';
-            res.status(201).json({ message: consoleMsg, registered: isRegistered });
-        }
-        */
-    } catch (err) {
-        console.error('Error registering participant:', err);
-        res.status(500).json({ error: err.message });
-    }
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      sameSite: "Lax",
+      maxAge: 3600000, // Expira en 1 hora (en ms)
+    });
+
+    res.status(201).json({ success: "success" });
+  } catch (err) {
+    console.error("Error registering participant:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-/*
-router.get('/winners/:uniqueId', async (req, res) => {
-    const { uniqueId } = req.params;
-    const query = 'SELECT prize FROM lb_contest_winners WHERE unique_id = ?';
+router.get("/get-user-id", async (req, res) => {
+  try {
+    const name = DOMPurify.sanitize(req.body.username);
 
-    try {
-        const [rows] = await pool.query(query, [uniqueId]);
-        const results = rows ? JSON.parse(JSON.stringify(rows)) : [];
-        if (results.prize) {
-            res.status(200).json({ prize: results.prize });
-        } else {
-            res.status(404).json({ message: 'No winner found for the given unique ID' });
-        }
-    } catch (err) {
-        console.error('Error retrieving winner:', err);
-        res.status(500).json({ error: err.message });
-    }
+    const rawPassword = DOMPurify.sanitize(req.body.password);
+    const hashedPassword = await bcrypt.hash(rawPassword, 10);
+
+    const query = `
+        SELECT
+        id
+        FROM
+        he_public_users
+        WHERE
+        username = ?,
+        password = ?
+        `;
+    const result = await pool.query(query, [name, hashedPassword]);
+    res.status(201).json({ success: "success", id: result });
+  } catch {
+    console.error("Algo salió mal :(");
+    res.status(500).json({ error: err.message });
+  }
 });
-*/
+
+router.get("/me", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id; // ID del usuario extraído del token
+
+    // Obtener datos del usuario desde la BD
+    const query = `SELECT 
+      u.id, 
+      u.username, 
+      u.email, 
+      p.profile_picture, 
+      p.dominant_leg, 
+      p.position, 
+      p.body_type, 
+      p.height, 
+      p.bio, 
+      p.prefer_matches
+      FROM he_public_users u
+      LEFT JOIN he_public_profiles p ON u.id = p.user_id
+      WHERE u.id = ?
+    `;
+
+    const rows = await pool.query(query, [userId]);
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Usuario no encontrado" });
+    }
+
+    res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    console.error("Error al obtener el usuario:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+router.get("/your-matches", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id; // ID del usuario extraído del token
+
+    // Obtener datos del usuario desde la BD
+    const query =
+      "SELECT id, match_title, match_type, match_size, schedule, created_at FROM he_matches WHERE creator_id = ? ORDER BY created_at DESC";
+    const rows = await pool.query(query, [userId]);
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No hay partidos", matches: [] });
+    }
+
+    res.status(200).json({ success: true, matches: rows });
+  } catch (error) {
+    console.error("Error al obtener los partidos:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+router.post("/post-match", authMiddleware, async (req, res) => {
+  try {
+    const title = DOMPurify.sanitize(req.body.title);
+
+    const type = DOMPurify.sanitize(req.body.type);
+
+    const size = DOMPurify.sanitize(req.body.size);
+
+    const schedule = DOMPurify.sanitize(req.body.schedule);
+
+    const userId = req.user.id;
+
+    //const schedule = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    matchPost.postNewMatch(
+      {
+        title: title,
+        type: type,
+        size: size,
+        schedule: schedule,
+        creatorId: userId,
+      },
+      res
+    );
+  } catch (err) {
+    console.error("Error registering participant:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/get-match/:id", authMiddleware, async (req, res) => {
+  try {
+    const matchId = req.params.id;
+
+    const query = `SELECT 
+      m.id, 
+      m.creator_id, 
+      m.match_title, 
+      m.match_type, 
+      m.match_size, 
+      m.schedule,
+      m.created_at,
+      JSON_ARRAYAGG(
+        JSON_OBJECT(
+            'user_id', p.user_id,
+            'role', p.role,
+            'status', p.status
+        )
+      ) AS participants
+      FROM he_matches AS m 
+      LEFT JOIN he_match_participants AS p ON m.id = p.match_id
+      WHERE m.id = ?
+      GROUP BY m.id`;
+    const rows = await pool.query(query, [matchId]);
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No hay partidos" });
+    }
+
+    const match = rows[0];
+    match.participants = JSON.parse(match.participants);
+    res.status(200).json({ success: true, match });
+  } catch (err) {
+    console.error("Error registering participant:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/user-invitations", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id; // ID del usuario extraído del token
+
+    // Obtener datos del usuario desde la BD
+    const query = `SELECT
+    m.id, 
+    m.creator_id,
+    m.match_title, 
+    m.match_type, 
+    m.match_size, 
+    m.schedule, 
+    p.id AS invitation_id,
+    p.status AS invitation_status, 
+    p.invited_by AS invitation_invitor, 
+    u1.username AS invitor_username,
+    u2.username AS invitee_username,
+    CASE 
+        WHEN p.user_id = ? THEN 'received' 
+        WHEN p.invited_by = ? THEN 'sent' 
+    END AS invitation_type
+    FROM he_matches AS m 
+    JOIN he_match_participants AS p ON m.id = p.match_id 
+    LEFT JOIN he_public_users AS u1 ON p.invited_by = u1.id
+    LEFT JOIN he_public_users AS u2 ON p.user_id = u2.id
+    WHERE p.user_id = ? OR p.invited_by = ?
+    ORDER BY m.created_at DESC`;
+
+    const rows = await pool.query(query, [
+      userId,
+      userId,
+      userId,
+      userId,
+      userId,
+    ]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No tienes invitaciones pendientes",
+        invitations: [],
+      });
+    }
+
+    res.status(200).json({ success: true, invitations: rows });
+  } catch (error) {
+    console.error("Error al obtener las invitaciones:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+router.get("/notify-invitation/:id", authMiddleware, async (req, res) => {
+  console.log(req.body);
+  try {
+    const userId = req.user.id; // ID del usuario extraído del token
+    const invitationId = req.params.id; // ID del usuario extraído del token
+
+    // Obtener datos del usuario desde la BD
+    const query = `SELECT
+      m.id, 
+      m.creator_id, 
+      m.match_title,
+      m.match_type, 
+      m.match_size, 
+      m.schedule,
+      p.id AS invitation_id,
+      p.status AS invitation_status,
+      p.invited_by AS invitation_invitor,
+      u1.username AS invitor_username,
+      u2.username AS invitee_username
+      FROM he_match_participants AS p
+      JOIN he_matches AS m ON p.match_id = m.id
+      LEFT JOIN he_public_users AS u1 ON p.invited_by = u1.id
+      LEFT JOIN he_public_users AS u2 ON p.user_id = u2.id
+      WHERE p.id = ?
+    `;
+    const rows = await pool.query(query, [invitationId]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No tienes invitaciones pendientes",
+        invitations: [],
+      });
+    }
+
+    res.status(200).json({ success: true, invitation: rows });
+  } catch (error) {
+    console.error("Error al obtener las invitaciones:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+router.put("/accept-invitation/:id", authMiddleware, async (req, res) => {
+  const invitationId = req.params.id;
+  const invitorId = req.body.invitor;
+  const userId = req.user.id;
+
+  try {
+    const query = `UPDATE he_match_participants SET status = ? WHERE id = ?`;
+    const result = await pool.query(query, ["confirmed", invitationId]);
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No se encontró la invitación" });
+    }
+
+    notifyInvitationUpdate(invitorId, {
+      type: "accepted_invitation",
+      confirmedUser: userId,
+      invitationId: invitationId,
+    });
+
+    res
+      .status(200)
+      .json({ success: true, message: "Confirmado", confirmed: true });
+  } catch (err) {
+    console.error("Error al intentar aceptar invitación:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+router.post("/public-login", async (req, res) => {
+  try {
+    const email = DOMPurify.sanitize(req.body.email);
+    const password = req.body.password;
+
+    const query = `
+        SELECT * FROM he_public_users 
+        WHERE 
+        email = ?
+        LIMIT 1
+        `;
+
+    const [rows] = await pool.query(query, [email]);
+
+    if (!rows.email) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Usuario no encontrado" });
+    }
+
+    const storedPassword = rows.password;
+
+    const passwordMatch = await bcrypt.compare(password, storedPassword);
+
+    if (!passwordMatch) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Contraseña incorrecta" });
+    }
+
+    const accessToken = jwt.sign(
+      { id: rows.id, email: rows.email }, // Payload del token
+      process.env.JWT_ACCESS_SECRET, // Clave secreta
+      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN } // Expiración
+    );
+
+    const refreshToken = jwt.sign(
+      { id: rows.id, email: rows.email },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN }
+    );
+
+    // Configurar las cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true, // No accesible desde JavaScript
+      //secure: process.env.NODE_ENV === 'production', // Solo en HTTPS en producción
+      sameSite: "Lax", // Evitar envío en cross-origin requests
+      maxAge: 120000, // Expira en 10 seg (en ms)
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      sameSite: "Lax",
+      maxAge: 3600000, // Expira en 1 hora (en ms)
+    });
+
+    res.status(200).json({
+      success: true,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    });
+  } catch (err) {
+    console.error("Algo salió mal :(");
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/logout", (req, res) => {
+  try {
+    // Eliminar cookies configurando `maxAge: 0`
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      sameSite: "Lax",
+    });
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      sameSite: "Lax",
+    });
+
+    res.status(200).json({ success: true, message: "Logout exitoso" });
+  } catch (error) {
+    console.error("Error en logout:", error);
+    res.status(500).json({ success: false, message: "Error al cerrar sesión" });
+  }
+});
+
+router.get("/users-to-invite", authMiddleware, async (req, res) => {
+  try {
+    console.log(req.user)
+    const matchId = req.query.match;
+    const adminId = req.user.id; // id del usuario que invita, tomado del refreshToken
+
+    const query = `SELECT 
+      u.id,
+      u.username, 
+      u.city, 
+      u.position, 
+      u.preferredFoot,
+      p.status AS invitation_status,
+      p2.profile_picture AS profile_pic
+      FROM he_public_users AS u
+      LEFT JOIN he_match_participants AS p ON u.id = p.user_id AND p.match_id = ${matchId}
+      LEFT JOIN he_public_profiles AS p2 ON u.id = p2.user_id
+      `;
+      //AND p.invited_by = ${adminId} 
+
+    const rows = await pool.query(query);
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No hay partidos" });
+    }
+
+    res.status(200).json({ success: true, users: rows });
+  } catch (err) {
+    console.error("Error registering participant:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/send-invite/:id", authMiddleware, async (req, res) => {
+  const matchId =
+    typeof req.params.id === "string" ? parseInt(req.params.id) : req.params.id;
+  const userId = req.body.id; // id enviado en el req por un objeto json en el metodo post de Axios
+  const invitorId = req.user.id; // id del usuario que invita, tomado del refreshToken
+  const invitorUsername = req.user.username;
+
+  const query =
+    "INSERT INTO he_match_participants (match_id, user_id, role, status, invited_by) VALUES (?, ?, ?, ?, ?)";
+  try {
+    const rows = await pool.query(query, [
+      matchId,
+      userId,
+      "participant",
+      "invited",
+      invitorId,
+    ]);
+
+    const invitationId = rows.insertId;
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No hay invitados" });
+    }
+
+    console.log(`invited id:`);
+
+    notifyInvitationUpdate(userId, {
+      type: "invitation_sent",
+      invitedBy: invitorId,
+      invitationId: invitationId,
+      matchId: matchId,
+      invitorUsername: invitorUsername,
+    });
+
+    res.status(200).json({ success: true, message: "Usuario invitado" });
+  } catch (err) {
+    console.error("Error sending invite:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+router.post("/upload-profile", authMiddleware, upload.single("image"), async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const filePath = req.file.path;
+    const uploadResponse = await cloudinary.uploader.upload(filePath, {
+      folder: "profiles",
+    });
+    
+    const query =
+    "UPDATE he_public_profiles SET profile_picture = ? WHERE user_id = ?";
+    
+    const rows = pool.query(query, [uploadResponse.secure_url, userId]);
+    
+    res.json({ url: uploadResponse.secure_url, success: rows.affectedRows !== 0 ? 'Foto de perfil actualizada con éxito!' : 'No se pudo actualizar la foto de perfil' });
+
+  } catch (error) {
+    console.error("Error al subir la imagen:", error);
+    res.status(500).json({ error: "Error al subir la imagen" });
+  }
+});
+
+
 module.exports = router;
